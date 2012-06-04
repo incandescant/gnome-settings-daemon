@@ -68,6 +68,15 @@ struct _GsdIdentityManagerInterface
                                               GAsyncResult       *result,
                                               GError            **error);
 
+        void      (* renew_identity)     (GsdIdentityManager   *identity_manager,
+                                          GsdIdentity          *identity,
+                                          GCancellable        *cancellable,
+                                          GAsyncReadyCallback  callback,
+                                          gpointer             user_data);
+        void      (* renew_identity_finish)  (GsdIdentityManager  *identity_manager,
+                                              GAsyncResult       *result,
+                                              GError            **error);
+
         void      (* sign_identity_out)  (GsdIdentityManager   *identity_manager,
                                           GsdIdentity          *identity,
                                           GCancellable        *cancellable,
@@ -104,8 +113,17 @@ void       gsd_identity_manager_sign_identity_out    (GsdIdentityManager   *iden
                                                       GAsyncReadyCallback  callback,
                                                       gpointer             user_data);
 void       gsd_identity_manager_sign_identity_out_finish (GsdIdentityManager *identity_manager,
-                                                         GAsyncResult       *result,
-                                                         GError            **error);
+                                                          GAsyncResult       *result,
+                                                          GError            **error);
+
+void       gsd_identity_manager_renew_identity (GsdIdentityManager   *identity_manager,
+                                                GsdIdentity          *identity,
+                                                GCancellable         *cancellable,
+                                                GAsyncReadyCallback   callback,
+                                                gpointer              user_data);
+void       gsd_identity_manager_renew_identity_finish (GsdIdentityManager *identity_manager,
+                                                       GAsyncResult       *result,
+                                                       GError            **error);
 
 char      *gsd_identity_manager_name_identity    (GsdIdentityManager *identity_manager,
                                                  GsdIdentity        *identity);

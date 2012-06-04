@@ -25,6 +25,9 @@
 
 #include "gsd-alarm.h"
 
+#define  TFD_TIMER_CANCEL_ON_SET  (1 << 1)
+#define HAVE_TIMERFD
+
 #ifdef HAVE_TIMERFD
 #include <sys/timerfd.h>
 #endif
@@ -85,6 +88,7 @@ clear_scheduled_immediate_wakeup (GsdAlarm *self)
 {
         if (self->priv->immediate_wakeup_source != NULL) {
                 g_source_destroy (self->priv->immediate_wakeup_source);
+                g_source_unref (self->priv->immediate_wakeup_source);
                 self->priv->immediate_wakeup_source = NULL;
         }
 }
@@ -101,6 +105,7 @@ clear_scheduled_timer_wakeups (GsdAlarm *self)
         }
 
         g_source_destroy (self->priv->timer.source);
+        g_source_unref (self->priv->timer.source);
         self->priv->timer.source = NULL;
 
         error = NULL;
@@ -123,8 +128,11 @@ clear_scheduled_timer_wakeups (GsdAlarm *self)
 static void
 clear_scheduled_timeout_wakeups (GsdAlarm *self)
 {
-        g_source_destroy (self->priv->timeout.source);
-        self->priv->timeout.source = NULL;
+        if (self->priv->timeout.source != NULL) {
+                g_source_destroy (self->priv->timeout.source);
+                g_source_unref (self->priv->timeout.source);
+                self->priv->timeout.source = NULL;
+        }
 }
 
 static void
@@ -146,6 +154,10 @@ clear_scheduled_wakeups (GsdAlarm *self)
         }
 
         if (self->priv->cancellable != NULL) {
+                if (!g_cancellable_is_cancelled (self->priv->cancellable)) {
+                        g_cancellable_cancel (self->priv->cancellable);
+                }
+
                 g_object_unref (self->priv->cancellable);
                 self->priv->cancellable = NULL;
         }
@@ -287,9 +299,13 @@ fire_or_rearm_alarm (GsdAlarm *self)
 }
 
 static gboolean
-on_immediate_wakeup_source_ready (gpointer user_data)
+on_immediate_wakeup_source_ready (GsdAlarm *self)
 {
-        GsdAlarm *self = GSD_ALARM (user_data);
+        g_return_val_if_fail (self->priv->type != GSD_ALARM_TYPE_UNSCHEDULED, FALSE);
+
+        if (g_cancellable_is_cancelled (self->priv->cancellable)) {
+                return FALSE;
+        }
 
         fire_or_rearm_alarm (self);
 
@@ -299,11 +315,17 @@ on_immediate_wakeup_source_ready (gpointer user_data)
 #ifdef HAVE_TIMERFD
 static gboolean
 on_timer_source_ready (GObject  *stream,
-                       gpointer  user_data)
+                       GsdAlarm *self)
 {
-        GsdAlarm *self = GSD_ALARM (user_data);
         gint64 number_of_fires;
         gssize bytes_read;
+
+        g_return_val_if_fail (GSD_IS_ALARM (self), FALSE);
+        g_return_val_if_fail (self->priv->type == GSD_ALARM_TYPE_TIMER, FALSE);
+
+        if (g_cancellable_is_cancelled (self->priv->cancellable)) {
+                return FALSE;
+        }
 
         bytes_read = g_pollable_input_stream_read_nonblocking (G_POLLABLE_INPUT_STREAM (stream),
                                                                &number_of_fires,
@@ -331,8 +353,12 @@ schedule_wakeups_with_timerfd (GsdAlarm *self)
         struct itimerspec timer_spec;
         int fd;
         int result;
+        static gboolean seen_before = FALSE;
 
-        g_debug ("GsdAlarm: trying to use kernel timer");
+        if (!seen_before) {
+                g_debug ("GsdAlarm: trying to use kernel timer");
+                seen_before = TRUE;
+        }
 
         fd = timerfd_create (CLOCK_REALTIME, TFD_CLOEXEC | TFD_NONBLOCK);
 
@@ -362,8 +388,9 @@ schedule_wakeups_with_timerfd (GsdAlarm *self)
         g_source_set_callback (self->priv->timer.source,
                                (GSourceFunc)
                                on_timer_source_ready,
-                               self,
-                               NULL);
+                               g_object_ref (self),
+                               (GDestroyNotify)
+                               g_object_unref);
         g_source_attach (self->priv->timer.source,
                          self->priv->context);
 
@@ -375,11 +402,21 @@ schedule_wakeups_with_timerfd (GsdAlarm *self)
 }
 
 static gboolean
-on_timeout_source_ready (gpointer user_data)
+on_timeout_source_ready (GsdAlarm *self)
 {
-        GsdAlarm *self = GSD_ALARM (user_data);
+        g_return_val_if_fail (GSD_IS_ALARM (self), FALSE);
+        g_return_val_if_fail (self->priv->type != GSD_ALARM_TYPE_UNSCHEDULED, FALSE);
+        g_return_val_if_fail (self->priv->type == GSD_ALARM_TYPE_TIMEOUT, FALSE);
+
+        if (g_cancellable_is_cancelled (self->priv->cancellable)) {
+                return FALSE;
+        }
 
         fire_or_rearm_alarm (self);
+
+        if (g_cancellable_is_cancelled (self->priv->cancellable)) {
+                return FALSE;
+        }
 
         schedule_wakeups_with_timeout_source (self);
 
@@ -392,6 +429,7 @@ schedule_wakeups_with_timeout_source (GsdAlarm *self)
         GDateTime *now;
         GTimeSpan time_span;
         guint interval;
+
         self->priv->type = GSD_ALARM_TYPE_TIMEOUT;
 
         now = g_date_time_new_now_local ();
@@ -409,8 +447,9 @@ schedule_wakeups_with_timeout_source (GsdAlarm *self)
         g_source_set_callback (self->priv->timeout.source,
                                (GSourceFunc)
                                on_timeout_source_ready,
-                               self,
-                               NULL);
+                               g_object_ref (self),
+                               (GDestroyNotify)
+                               g_object_unref);
 
         g_source_attach (self->priv->timeout.source,
                          self->priv->context);
@@ -424,7 +463,12 @@ schedule_wakeups (GsdAlarm *self)
         wakeup_scheduled = schedule_wakeups_with_timerfd (self);
 
         if (!wakeup_scheduled) {
-                g_debug ("GsdAlarm: falling back to polling timeout\n");
+                static gboolean seen_before = FALSE;
+
+                if (!seen_before) {
+                        g_debug ("GsdAlarm: falling back to polling timeout\n");
+                        seen_before = TRUE;
+                }
                 schedule_wakeups_with_timeout_source (self);
         }
 }
@@ -437,27 +481,29 @@ schedule_immediate_wakeup (GsdAlarm *self)
         g_source_set_callback (self->priv->immediate_wakeup_source,
                                (GSourceFunc)
                                on_immediate_wakeup_source_ready,
-                               self,
-                               NULL);
-
+                               g_object_ref (self),
+                               (GDestroyNotify)
+                               g_object_unref);
         g_source_attach (self->priv->immediate_wakeup_source,
                          self->priv->context);
 }
 
 void
-gsd_alarm_set (GsdAlarm      *self,
-              GDateTime    *time,
-              GCancellable *cancellable)
+gsd_alarm_set (GsdAlarm     *self,
+               GDateTime    *time,
+               GCancellable *cancellable)
 {
+        if (g_cancellable_is_cancelled (cancellable)) {
+                return;
+        }
+
         if (self->priv->cancellable != NULL) {
                 if (!g_cancellable_is_cancelled (self->priv->cancellable)) {
                         g_cancellable_cancel (cancellable);
                 }
 
-                if (self->priv->cancellable != NULL) {
-                    g_object_unref (self->priv->cancellable);
-                    self->priv->cancellable = NULL;
-                }
+                g_object_unref (self->priv->cancellable);
+                self->priv->cancellable = NULL;
         }
 
         if (cancellable == NULL) {

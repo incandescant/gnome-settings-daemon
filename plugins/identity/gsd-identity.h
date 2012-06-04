@@ -49,6 +49,7 @@ struct _GsdIdentityInterface
 
 enum _GsdIdentityError {
         GSD_IDENTITY_ERROR_VERIFYING,
+        GSD_IDENTITY_ERROR_RENEWING,
         GSD_IDENTITY_ERROR_ERASING
 };
 

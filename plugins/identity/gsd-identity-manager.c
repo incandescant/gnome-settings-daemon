@@ -89,9 +89,9 @@ gsd_identity_manager_error_quark (void)
 
 void
 gsd_identity_manager_list_identities (GsdIdentityManager   *self,
-                                      GCancellable        *cancellable,
-                                      GAsyncReadyCallback  callback,
-                                      gpointer             user_data)
+                                      GCancellable         *cancellable,
+                                      GAsyncReadyCallback   callback,
+                                      gpointer              user_data)
 {
         GSD_IDENTITY_MANAGER_GET_IFACE (self)->list_identities (self,
                                                                cancellable,
@@ -101,8 +101,8 @@ gsd_identity_manager_list_identities (GsdIdentityManager   *self,
 
 GList *
 gsd_identity_manager_list_identities_finish (GsdIdentityManager  *self,
-                                             GAsyncResult       *result,
-                                             GError            **error)
+                                             GAsyncResult        *result,
+                                             GError             **error)
 {
         return GSD_IDENTITY_MANAGER_GET_IFACE (self)->list_identities_finish (self,
                                                                              result,
@@ -110,26 +110,44 @@ gsd_identity_manager_list_identities_finish (GsdIdentityManager  *self,
 }
 
 void
+gsd_identity_manager_renew_identity (GsdIdentityManager   *self,
+                                     GsdIdentity          *identity,
+                                     GCancellable         *cancellable,
+                                     GAsyncReadyCallback   callback,
+                                     gpointer              user_data)
+{
+        GSD_IDENTITY_MANAGER_GET_IFACE (self)->renew_identity (self, identity, cancellable, callback, user_data);
+}
+
+void
+gsd_identity_manager_renew_identity_finish (GsdIdentityManager  *self,
+                                            GAsyncResult        *result,
+                                            GError             **error)
+{
+        GSD_IDENTITY_MANAGER_GET_IFACE (self)->renew_identity_finish (self, result, error);
+}
+
+void
 gsd_identity_manager_sign_identity_out (GsdIdentityManager   *self,
                                         GsdIdentity          *identity,
-                                        GCancellable        *cancellable,
-                                        GAsyncReadyCallback  callback,
-                                        gpointer             user_data)
+                                        GCancellable         *cancellable,
+                                        GAsyncReadyCallback   callback,
+                                        gpointer              user_data)
 {
         GSD_IDENTITY_MANAGER_GET_IFACE (self)->sign_identity_out (self, identity, cancellable, callback, user_data);
 }
 
 void
 gsd_identity_manager_sign_identity_out_finish (GsdIdentityManager  *self,
-                                               GAsyncResult       *result,
-                                               GError            **error)
+                                               GAsyncResult        *result,
+                                               GError             **error)
 {
         GSD_IDENTITY_MANAGER_GET_IFACE (self)->sign_identity_out_finish (self, result, error);
 }
 
 char *
 gsd_identity_manager_name_identity (GsdIdentityManager *self,
-                                   GsdIdentity        *identity)
+                                    GsdIdentity        *identity)
 {
         return GSD_IDENTITY_MANAGER_GET_IFACE (self)->name_identity (self,
                                                                     identity);
