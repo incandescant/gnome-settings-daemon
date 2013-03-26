@@ -1,0 +1,9 @@
+[GNOME Settings Plugin]
+Module=connman
+IAge=0
+Priority=1
+_Name=ConnMan
+_Description=Listens for changes in ConnMan configuration and updates GNOME proxy settings appropriately
+Authors=Joshua Lock <joshua.lock@intel.com>
+Copyright=Copyright © 2013 Intel Corp
+Website=
