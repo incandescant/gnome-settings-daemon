@@ -51,5 +51,11 @@ else
 disabled_plugins += print-notifications
 endif
 
+if HAVE_CONNMAN
+enabled_plugins += connman
+else
+disabled_plugins += connman
+endif
+
 SUBDIRS = common $(enabled_plugins)
 DIST_SUBDIRS = $(SUBDIRS) $(disabled_plugins)

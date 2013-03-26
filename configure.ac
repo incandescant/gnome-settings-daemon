@@ -419,6 +419,15 @@ if test "$enable_man" != no; then
 fi
 AM_CONDITIONAL(ENABLE_MAN, test "$enable_man" != no)
 
+# ---------------------------------------------------------------------------
+# Enable ConnMan
+# ---------------------------------------------------------------------------
+AC_ARG_ENABLE(connman,
+	[AS_HELP_STRING([--enable-connman],
+	[turn on connman proxy monitor])],
+	, enable_connman=no)
+AM_CONDITIONAL(HAVE_CONNMAN, test "$enable_connman" != no)
+
 dnl ---------------------------------------------------------------------------
 dnl - Finish
 dnl ---------------------------------------------------------------------------
@@ -492,6 +501,7 @@ plugins/a11y-settings/Makefile
 plugins/clipboard/Makefile
 plugins/color/Makefile
 plugins/common/Makefile
+plugins/connman/Makefile
 plugins/cursor/Makefile
 plugins/dummy/Makefile
 plugins/power/Makefile
@@ -526,6 +536,7 @@ data/org.gnome.settings-daemon.plugins.updates.gschema.xml.in
 data/org.gnome.settings-daemon.plugins.xrandr.gschema.xml.in
 data/org.gnome.settings-daemon.peripherals.wacom.gschema.xml.in
 data/org.gnome.settings-daemon.plugins.print-notifications.gschema.xml.in
+data/org.gnome.settings-daemon.plugins.connman.gschema.xml.in
 po/Makefile.in
 man/Makefile
 tests/Makefile
@@ -566,4 +577,5 @@ ${NSS_DATABASE:+\
         System nssdb:             ${NSS_DATABASE}
 }\
         Profiling support:        ${enable_profiling}
+        ConnMan proxy support:    ${enable_connman}
 "
