@@ -112,17 +112,23 @@ gsd_connman_manager_set_auto_proxy (GsdConnmanManager   *manager,
 }
 
 static void
-parse_server_entry (const char  *server_entry,
-                    char        **protocol,
-                    char        **server,
+parse_server_entry (const gchar *server_entry,
+                    gchar       **protocol,
+                    gchar       **server,
                     gint        *port)
 {
         gchar   **host, **url;
         guint   host_part = 0;
 
+        if (!server_entry)
+                return;
+
         /* proto://server.example.com:911 */
         host = g_strsplit (server_entry, "://", -1);
-        if (g_strv_length (host) > 1 && host[1]) {
+        if (g_strv_length (host) < 1) {
+                g_warning ("Invalid value set for manual proxy - ignoring.");
+                goto host;
+        } else if (g_strv_length (host) > 1 && host[1]) {
                 /* Got protocol and domain[:port] */
                 (*protocol) = g_strdup (host[0]);
                 host_part = 1;
@@ -145,8 +151,9 @@ parse_server_entry (const char  *server_entry,
         }
         (*server) = g_strdup (url[0]);
 
-        g_strfreev (host);
         g_strfreev (url);
+host:
+        g_strfreev (host);
 }
 
 static void
@@ -167,10 +174,13 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
                 servers = g_variant_get_strv (val, &num_servers);
 
                 for (i = 0; i < num_servers; i++) {
-                        gchar   *protocol, *server;
+                        gchar   *protocol = NULL;
+                        gchar   *server = NULL;
                         gint    port;
 
                         parse_server_entry (servers[i], &protocol, &server, &port);
+                        if (!server)
+                                continue;
 
                         if (g_strcmp0 (protocol, "http") == 0) {
                                 child_settings = g_settings_get_child
@@ -184,7 +194,9 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
                                 child_settings = g_settings_get_child
                                         (manager->priv->proxy_settings,
                                          KEY_FTP);
-                        } else if (g_strcmp0 (protocol, "socks") == 0) {
+                        } else if (g_strcmp0 (protocol, "socks") == 0 ||
+                                   g_strcmp0 (protocol, "socks4") == 0 ||
+                                   g_strcmp0 (protocol, "socks5") == 0) {
                                 child_settings = g_settings_get_child
                                         (manager->priv->proxy_settings,
                                          KEY_SOCKS);
@@ -235,7 +247,6 @@ gsd_connman_manager_set_proxy_values (GsdConnmanManager *manager,
                                       G_VARIANT_TYPE_STRING);
         if (val) {
                 method = g_variant_get_string (val, 0);
-                g_variant_unref (val);
                 if (method == NULL || g_strcmp0 (method, "direct") == 0) {
                         g_debug ("Setting proxy to direct");
                         return;
@@ -246,6 +257,7 @@ gsd_connman_manager_set_proxy_values (GsdConnmanManager *manager,
                         gsd_connman_manager_set_manual_proxy (manager,
                                                               proxy_values);
                 }
+                g_variant_unref (val);
         }
 }
 
@@ -275,10 +287,11 @@ service_proxy_ready_cb (GObject         *source_object,
         manager->priv->active_service =
                 service_proxy_new_for_bus_finish (result, &error);
 
-        if (error) {
+        if (!manager->priv->active_service) {
                 g_warning ("Could not get proxy for service: %s",
                            error->message);
-                g_error_free (error);
+                g_clear_error (&error);
+                return;
         }
 
         g_signal_connect (manager->priv->active_service, "property-changed",
@@ -294,10 +307,16 @@ handle_service (const gchar      *path,
         GsdConnmanManager       *manager = GSD_CONNMAN_MANAGER (user_data);
         GVariant                *proxy;
 
-        g_clear_object (&manager->priv->active_service);
+
+        if (manager->priv->active_service) {
+                g_signal_handlers_disconnect_by_func (manager->priv->active_service,
+                                                      service_property_changed_cb,
+                                                      manager);
+                g_clear_object (&manager->priv->active_service);
+        }
 
         /*
-         * We maybe shouldn't pay attention to a Service with isn't connected,
+         * We maybe shouldn't pay attention to a Service which isn't connected,
          * i.e. doesn't have a State property of "online", but as we are arguably
          * overzealous about unsetting the we should be OK to set proxy settings
          * even if the service isn't connected and save ourselves some work.
@@ -328,14 +347,14 @@ manager_get_services_cb (GObject        *source,
         GVariant                *ret, *val, *obj_val, *props;
         GError                  *error = NULL;
         GVariantIter            obj_iter;
-        gchar                   *path = NULL;
-        gsize                   *num_services;
+        const gchar             *path = NULL;
+        gsize                   num_services;
 
         if (!manager_call_get_services_finish (manager->priv->manager_proxy,
                                                &ret, result, &error)) {
                 g_warning ("manager_call_get_services () failed: %s",
                            error->message);
-                g_error_free (error);
+                g_clear_error (&error);
                 return;
         }
 
@@ -358,7 +377,7 @@ manager_get_services_cb (GObject        *source,
                         g_warning ("The first Service returned by ConnMan is empty");
                         goto out;
                 }
-                g_variant_get (obj_val, "o", &path);
+                path = g_variant_get_string (obj_val, NULL);
 
                 // properties
                 props = g_variant_iter_next_value (&obj_iter);
@@ -367,7 +386,6 @@ manager_get_services_cb (GObject        *source,
                         g_variant_unref (props);
                 }
 
-                g_free (path);
                 g_variant_unref (obj_val);
         out:
                 g_variant_unref (val);
@@ -401,7 +419,7 @@ manager_proxy_ready_cb (GObject         *source_object,
         if (manager->priv->manager_proxy == NULL) {
                 g_warning ("Could not connect to ConnMan: %s",
                            error->message);
-                g_error_free (error);
+                g_clear_error (&error);
                 return;
         }
 
@@ -437,6 +455,9 @@ gsd_connman_manager_stop (GsdConnmanManager *manager)
         g_debug ("Stopping connman manager");
 
         connman_manager_clear_proxy_settings (manager);
+
+        g_clear_object (&manager->priv->manager_proxy);
+        g_clear_object (&manager->priv->active_service);
 }
 
 static void
@@ -451,8 +472,6 @@ gsd_connman_manager_finalize (GObject *object)
 
         g_return_if_fail (manager->priv != NULL);
 
-        g_clear_object (&manager->priv->manager_proxy);
-        g_clear_object (&manager->priv->active_service);
         g_clear_object (&manager->priv->proxy_settings);
 
         G_OBJECT_CLASS (gsd_connman_manager_parent_class)->finalize (object);
