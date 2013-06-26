@@ -247,12 +247,19 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
         gboolean        has_changed = FALSE;
         gchar           *current_method;
         gchar           **current_excludes;
+        const gchar     *new_method;
 
         current_method = g_settings_get_string (manager->priv->proxy_settings,
                                                 KEY_MODE);
 
+        /* GNOME uses 'none' where ConnMan uses 'direct' */
+        if (g_strcmp0 (method, "direct") == 0)
+                new_method = "none";
+        else
+                new_method = method;
+
         /* If the methods are different, settings have changed */
-        if (g_strcmp0 (method, current_method) != 0) {
+        if (g_strcmp0 (new_method, current_method) != 0) {
                 g_debug ("Proxy method changed from %s to %s",
                          current_method, method);
                 has_changed = TRUE;
