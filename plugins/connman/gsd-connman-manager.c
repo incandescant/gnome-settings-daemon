@@ -253,12 +253,15 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
 
         /* If the methods are different, settings have changed */
         if (g_strcmp0 (method, current_method) != 0) {
+                g_debug ("Proxy method changed from %s to %s",
+                         current_method, method);
                 has_changed = TRUE;
         } else {
                 GVariant        *val;
 
                 /* Method was direct and is still direct = not changed */
                 if (g_strcmp0 (method, "direct") == 0) {
+                        /*g_debug ("Proxy method unchanged - direct");*/
                         has_changed = FALSE;
                 /* Method is auto and URL different = changed */
                 } else if (g_strcmp0 (method, "auto") == 0) {
@@ -272,6 +275,8 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                                                                   KEY_AUTO_URL);
 
                         if (g_strcmp0 (auto_url, current_auto_url) != 0) {
+                                g_debug ("Proxy auto url changed from %s to %s",
+                                         current_auto_url, auto_url);
                                 has_changed = TRUE;
                         }
 
@@ -293,12 +298,14 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                                 servers = g_variant_get_strv (val, &num_servers);
 
                                 if (g_strv_length ((gchar **) servers) != g_strv_length (manager->priv->current_servers)) {
+                                        g_debug ("Number of configured proxy servers has changed");
                                         has_changed = TRUE;
                                         goto servers_done;
                                 }
 
                                 for (i = 0; i < num_servers; i++) {
                                         if (g_strcmp0 (servers[i], manager->priv->current_servers[i]) != 0) {
+                                                g_debug ("Configured servers have changed");
                                                 has_changed = TRUE;
                                                 break;
                                         }
@@ -322,12 +329,14 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                                 excludes = g_variant_get_strv (val, &num_excludes);
 
                                 if (g_strv_length (current_excludes) != g_strv_length ((gchar **) excludes)) {
+                                        g_debug ("Number of excludes has changed");
                                         has_changed = TRUE;
                                         goto excludes_done;
                                 }
 
                                 for (i = 0; i < num_excludes; i++) {
                                         if (g_strcmp0 (excludes[i], current_excludes[i]) != 0) {
+                                                g_debug ("Configured excludes have changed");
                                                 has_changed = TRUE;
                                                 break;
                                         }
@@ -339,6 +348,8 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                         }
                 }
         }
+
+        /*g_debug ("Proxy configuration has%s changed", has_changed ? "" : " not");*/
 
         g_free (current_method);
 
@@ -358,10 +369,8 @@ gsd_connman_manager_set_proxy_values (GsdConnmanManager *manager,
         if (val) {
                 method = g_variant_get_string (val, 0);
 
-                if (!gsd_connman_manager_settings_changed (manager, method, proxy_values)) {
-                        g_debug ("Proxy settings unchanged");
+                if (!gsd_connman_manager_settings_changed (manager, method, proxy_values))
                         goto done;
-                }
 
                 connman_manager_clear_proxy_settings (manager);
 
@@ -512,6 +521,7 @@ manager_get_services_cb (GObject        *source,
                  * available services.
                  */
                 if (!service_found) {
+                        g_debug ("No service found, clearing proxy settings");
                         connman_manager_clear_proxy_settings (manager);
                 }
                 g_variant_unref (val);
