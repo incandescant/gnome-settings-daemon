@@ -50,10 +50,7 @@ struct GsdConnmanManagerPrivate {
         Manager         *manager_proxy;
         Service         *active_service;
         GSettings       *proxy_settings;
-        gchar           *current_method;
-        gchar           *current_auto_url;
         gchar           **current_servers;
-        gchar           **current_excludes;
 };
 
 static void     gsd_connman_manager_class_init  (GsdConnmanManagerClass *klass);
@@ -96,15 +93,6 @@ connman_manager_clear_proxy_settings (GsdConnmanManager *manager)
 }
 
 static void
-gsd_connman_manager_clear_saved_config (GsdConnmanManager       *manager)
-{
-        g_clear_pointer (&manager->priv->current_method, g_free);
-        g_clear_pointer (&manager->priv->current_auto_url, g_free);
-        g_clear_pointer (&manager->priv->current_servers, g_strfreev);
-        g_clear_pointer (&manager->priv->current_excludes, g_strfreev);
-}
-
-static void
 gsd_connman_manager_set_auto_proxy (GsdConnmanManager   *manager,
                                     GVariant            *proxy_values)
 {
@@ -120,10 +108,6 @@ gsd_connman_manager_set_auto_proxy (GsdConnmanManager   *manager,
                                KEY_MODE, "auto");
         g_settings_set_string (manager->priv->proxy_settings,
                                KEY_AUTO_URL, auto_url);
-
-        gsd_connman_manager_clear_saved_config (manager);
-        manager->priv->current_method = g_strdup ("auto");
-        manager->priv->current_auto_url = g_strdup (auto_url);
 
         g_variant_unref (val);
 }
@@ -185,9 +169,6 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
 
         g_debug ("Setting proxy to manual");
 
-        gsd_connman_manager_clear_saved_config (manager);
-        manager->priv->current_method = g_strdup ("manual");
-
         val = g_variant_lookup_value (proxy_values, "Servers",
                                       G_VARIANT_TYPE_STRING_ARRAY);
         if (val) {
@@ -234,7 +215,8 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
                         g_free (server);
                 }
 
-                manager->priv->current_servers = g_strdupv ((gchar **)servers);
+                g_clear_pointer (&manager->priv->current_servers, g_strfreev);
+                manager->priv->current_servers = g_strdupv ((gchar **) servers);
 
                 g_free (servers);
                 g_variant_unref (val);
@@ -243,8 +225,6 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
         val = g_variant_lookup_value (proxy_values, "Excludes",
                                       G_VARIANT_TYPE_STRING_ARRAY);
         if (val) {
-                const gchar     **excludes;
-
                 /* The Excludes property of a ConnMan Service is of type as
                  * and the ignore-hosts GSetting expects an as .:. we can just
                  * set the exact values we retrieved.
@@ -252,10 +232,6 @@ gsd_connman_manager_set_manual_proxy (GsdConnmanManager *manager,
                 g_settings_set_value (manager->priv->proxy_settings,
                                       KEY_IGNORE, val);
 
-                excludes = g_variant_get_strv (val, NULL);
-                manager->priv->current_excludes = g_strdupv ((gchar **)excludes);
-
-                g_free (excludes);
                 g_variant_unref (val);
         }
 
@@ -268,30 +244,39 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                                       const gchar       *method,
                                       GVariant          *proxy_values)
 {
+        gboolean        has_changed = FALSE;
+        gchar           *current_method;
+        gchar           **current_excludes;
+
+        current_method = g_settings_get_string (manager->priv->proxy_settings,
+                                                KEY_MODE);
+
         /* If the methods are different, settings have changed */
-        if (g_strcmp0 (method, manager->priv->current_method) != 0)
-                return TRUE;
-        else {
+        if (g_strcmp0 (method, current_method) != 0) {
+                has_changed = TRUE;
+        } else {
                 GVariant        *val;
 
                 /* Method was direct and is still direct = not changed */
                 if (g_strcmp0 (method, "direct") == 0) {
-                        return FALSE;
+                        has_changed = FALSE;
                 /* Method is auto and URL different = changed */
                 } else if (g_strcmp0 (method, "auto") == 0) {
                         const gchar     *auto_url;
-                        gboolean        changed = FALSE;
+                        gchar           *current_auto_url;
 
                         val = g_variant_lookup_value (proxy_values, "URL",
                                                       G_VARIANT_TYPE_STRING);
                         auto_url = g_variant_get_string (val, 0);
+                        current_auto_url = g_settings_get_string (manager->priv->proxy_settings,
+                                                                  KEY_AUTO_URL);
 
-                        if (g_strcmp0 (auto_url, manager->priv->current_auto_url) != 0)
-                                changed = TRUE;
+                        if (g_strcmp0 (auto_url, current_auto_url) != 0) {
+                                has_changed = TRUE;
+                        }
 
                         g_variant_unref (val);
 
-                        return changed;
                 /* Method is manual and any of the servers or excludes are different
                  * = changed
                  */
@@ -304,51 +289,60 @@ gsd_connman_manager_settings_changed (GsdConnmanManager *manager,
                                 const gchar **servers;
                                 gsize num_servers;
                                 gint i;
-                                gboolean changed = FALSE;
 
                                 servers = g_variant_get_strv (val, &num_servers);
 
+                                if (g_strv_length ((gchar **) servers) != g_strv_length (manager->priv->current_servers)) {
+                                        has_changed = TRUE;
+                                        goto servers_done;
+                                }
+
                                 for (i = 0; i < num_servers; i++) {
                                         if (g_strcmp0 (servers[i], manager->priv->current_servers[i]) != 0) {
-                                                changed = TRUE;
+                                                has_changed = TRUE;
                                                 break;
                                         }
                                 }
 
+                        servers_done:
                                 g_free (servers);
                                 g_variant_unref (val);
-                                if (changed)
-                                        return TRUE;
                         }
 
                         /* Compare Excludes, as soon as mismatch return TRUE
                          */
                         val = g_variant_lookup_value (proxy_values, "Excludes",
                                                       G_VARIANT_TYPE_STRING_ARRAY);
+                        current_excludes = g_settings_get_strv (manager->priv->proxy_settings, KEY_IGNORE);
                         if (val) {
                                 const gchar     **excludes;
                                 gsize           num_excludes;
                                 gint            i;
-                                gboolean        changed = FALSE;
 
                                 excludes = g_variant_get_strv (val, &num_excludes);
 
+                                if (g_strv_length (current_excludes) != g_strv_length ((gchar **) excludes)) {
+                                        has_changed = TRUE;
+                                        goto excludes_done;
+                                }
+
                                 for (i = 0; i < num_excludes; i++) {
-                                        if (g_strcmp0 (excludes[i], manager->priv->current_excludes[i]) != 0) {
-                                                changed = TRUE;
+                                        if (g_strcmp0 (excludes[i], current_excludes[i]) != 0) {
+                                                has_changed = TRUE;
                                                 break;
                                         }
                                 }
-
+                        excludes_done:
+                                g_strfreev (current_excludes);
                                 g_free (excludes);
                                 g_variant_unref (val);
-                                if (changed)
-                                        return TRUE;
                         }
                 }
         }
 
-        return FALSE;
+        g_free (current_method);
+
+        return has_changed;
 }
 
 static void
@@ -373,8 +367,6 @@ gsd_connman_manager_set_proxy_values (GsdConnmanManager *manager,
 
                 if (method == NULL || g_strcmp0 (method, "direct") == 0) {
                         g_debug ("Setting proxy to direct");
-                        gsd_connman_manager_clear_saved_config (manager);
-                        manager->priv->current_method = g_strdup ("direct");
                 } else if (g_strcmp0 (method, "auto") == 0) {
                         gsd_connman_manager_set_auto_proxy (manager,
                                                             proxy_values);
@@ -521,7 +513,6 @@ manager_get_services_cb (GObject        *source,
                  */
                 if (!service_found) {
                         connman_manager_clear_proxy_settings (manager);
-                        gsd_connman_manager_clear_saved_config (manager);
                 }
                 g_variant_unref (val);
         }
@@ -594,8 +585,7 @@ gsd_connman_manager_stop (GsdConnmanManager *manager)
 
         g_clear_object (&manager->priv->manager_proxy);
         g_clear_object (&manager->priv->active_service);
-
-        gsd_connman_manager_clear_saved_config (manager);
+        g_clear_pointer (&manager->priv->current_servers, g_strfreev);
 }
 
 static void
@@ -632,10 +622,7 @@ gsd_connman_manager_init (GsdConnmanManager *manager)
 
         manager->priv->active_service = NULL;
         manager->priv->proxy_settings = g_settings_new (SCHEMA_PROXY);
-        manager->priv->current_method = NULL;
-        manager->priv->current_auto_url = NULL;
         manager->priv->current_servers = NULL;
-        manager->priv->current_excludes = NULL;
 }
 
 GsdConnmanManager *
